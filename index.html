@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>👻</title>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body {
+      background-color: black;
+      font-family: helvetica, arial, sans-serif;
+      margin: 0;
+    }
+
+    em {
+      font-weight: bold;
+    }
+
+    video {
+      clear: both;
+      display: block;
+    }
+
+    section {
+      opacity: 1;
+      transition: opacity 500ms ease-in-out;
+    }
+
+    header,
+    footer {
+      clear: both;
+    }
+
+    .invisible {
+      opacity: 0.2;
+    }
+
+    .webcam {
+      position: relative;
+      float: left;
+      width: 50%;
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .webcam canvas.overlay {
+      opacity: 1;
+      top: 0;
+      left: 0;
+      z-index: 2;
+    }
+
+    #liveView {
+      transform-origin: top left;
+      transform: scale(1);
+      display: inline-flex;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js" type="text/javascript"></script>
+</head>
+
+<body>
+  <section id="demos" class="invisible">
+    <div id="liveView" class="webcam">
+      <video id="webcam" autoplay></video>
+    </div>
+  </section>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix@2.0"></script>
+  <script defer>
+    const DEBUG = false;
+    const video = document.getElementById("webcam");
+    const liveView = document.getElementById("liveView");
+    const demosSection = document.getElementById("demos");
+
+    const bodyPixProperties = {
+      architecture: "MobileNetV1",
+      outputStride: 16,
+      multiplier: 0.75,
+      quantBytes: 4
+    };
+    const segmentationProperties = {
+      flipHorizontal: false,
+      internalResolution: "high",
+      segmentationThreshold: 0.9,
+      scoreThreshold: 0.2
+    };
+
+    function processSegmentation(canvas, segmentation) {
+      const ctx = canvas.getContext("2d");
+      console.log(segmentation);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const liveData = videoRenderCanvasCtx.getImageData(0, 0, canvas.width, canvas.height);
+      const dataL = liveData.data;
+      let minX = 100000;
+      let minY = 100000;
+      let maxX = 0;
+      let maxY = 0;
+      let foundBody = false; // Go through pixels and figure out bounding box of body pixels.
+
+      for (let x = 0; x < canvas.width; x++) {
+        for (let y = 0; y < canvas.height; y++) {
+          let n = y * canvas.width + x; // Human pixel found. Update bounds.
+
+          if (segmentation.data[n] !== 0) {
+            if (x < minX) {
+              minX = x;
+            }
+
+            if (y < minY) {
+              minY = y;
+            }
+
+            if (x > maxX) {
+              maxX = x;
+            }
+
+            if (y > maxY) {
+              maxY = y;
+            }
+
+            foundBody = true;
+          }
+        }
+      } // Calculate dimensions of bounding box.
+
+      const width = maxX - minX;
+      const height = maxY - minY; // Define scale factor to use to allow for false negatives around this region.
+      const scale = 1.3; //  Define scaled dimensions.
+      const newWidth = width * scale;
+      const newHeight = height * scale; // Caculate the offset to place new bounding box so scaled from center of current bounding box.
+      const offsetX = (newWidth - width) / 2;
+      const offsetY = (newHeight - height) / 2;
+      const newXMin = minX - offsetX;
+      const newYMin = minY - offsetY; // Now loop through update backgound understanding with new data
+      // if not inside a bounding box.
+      for (let x = 0; x < canvas.width; x++) {
+        for (let y = 0; y < canvas.height; y++) {
+          // If outside bounding box and we found a body, update background.
+          if (
+            (foundBody && (x < newXMin || x > newXMin + newWidth)) ||
+            y < newYMin ||
+            y > newYMin + newHeight
+          ) {
+            // Convert xy co-ords to array offset.
+            let n = y * canvas.width + x;
+            data[n * 4] = dataL[n * 4];
+            data[n * 4 + 1] = dataL[n * 4 + 1];
+            data[n * 4 + 2] = dataL[n * 4 + 2];
+            data[n * 4 + 3] = 255;
+          } else if (!foundBody) {
+            // No body found at all, update all pixels.
+            let n = y * canvas.width + x;
+            data[n * 4] = dataL[n * 4];
+            data[n * 4 + 1] = dataL[n * 4 + 1];
+            data[n * 4 + 2] = dataL[n * 4 + 2];
+            data[n * 4 + 3] = 255;
+          }
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      if (DEBUG) {
+        ctx.strokeStyle = "#00FF00";
+        ctx.beginPath();
+        ctx.rect(newXMin, newYMin, newWidth, newHeight);
+        ctx.stroke();
+      }
+    }
+
+    let modelHasLoaded = false;
+    let model = undefined;
+    let previousSegmentationComplete = true;
+
+    model = bodyPix.load(bodyPixProperties).then(function (loadedModel) {
+      model = loadedModel;
+      modelHasLoaded = true; // Show demo section now model is ready to use.
+      demosSection.classList.remove("invisible");
+    });
+    function predictWebcam() {
+      if (previousSegmentationComplete) {
+        videoRenderCanvasCtx.drawImage(video, 0, 0);
+        previousSegmentationComplete = false;
+        model
+          .segmentPerson(videoRenderCanvas, segmentationProperties)
+          .then(function (segmentation) {
+            processSegmentation(webcamCanvas, segmentation);
+            previousSegmentationComplete = true;
+          });
+      }
+      window.requestAnimationFrame(predictWebcam);
+    }
+
+    const enableCam = async () => {
+      if (!modelHasLoaded) {
+        setTimeout(() => { enableCam() }, 200);
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      video.addEventListener("loadedmetadata", () => {
+        webcamCanvas.width = video.videoWidth;
+        webcamCanvas.height = video.videoHeight;
+        videoRenderCanvas.width = video.videoWidth;
+        videoRenderCanvas.height = video.videoHeight;
+        bodyPixCanvas.width = video.videoWidth;
+        bodyPixCanvas.height = video.videoHeight;
+        let webcamCanvasCtx = webcamCanvas.getContext("2d");
+        webcamCanvasCtx.drawImage(video, 0, 0);
+      });
+      video.srcObject = stream;
+      video.addEventListener("loadeddata", predictWebcam);
+    }
+
+    const videoRenderCanvas = document.createElement("canvas");
+    const videoRenderCanvasCtx = videoRenderCanvas.getContext("2d");
+    const webcamCanvas = document.createElement("canvas");
+    webcamCanvas.setAttribute("class", "overlay");
+    liveView.appendChild(webcamCanvas);
+    const bodyPixCanvas = document.createElement("canvas");
+    bodyPixCanvas.setAttribute("class", "overlay");
+    const bodyPixCanvasCtx = bodyPixCanvas.getContext("2d");
+    bodyPixCanvasCtx.fillStyle = "#FF0000";
+    liveView.appendChild(bodyPixCanvas);
+
+    if (!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+      enableCam();
+    } else {
+      console.warn("getUserMedia() is not supported by your browser");
+    }
+    // alexlevy0
+  </script>
+</body>
+
+</html>
