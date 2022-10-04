@@ -96,7 +96,7 @@
 
     function processSegmentation(canvas, segmentation) {
       const ctx = canvas.getContext("2d");
-      console.log(segmentation);
+
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const data = imageData.data;
       const liveData = videoRenderCanvasCtx.getImageData(0, 0, canvas.width, canvas.height);
