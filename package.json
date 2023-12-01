@@ -1,0 +1,15 @@
+{
+    "name": "disparition",
+    "version": "1.0.0",
+    "main": "index.html",
+    "scripts": {
+      "start": "serve"
+    },
+    "author": "alex lévy",
+    "devDependencies": {
+      "serve": "^11.2.0",
+      "babel-eslint": "^10.1.0",
+      "eslint": "^7.2.0"
+    }
+  }
+  
